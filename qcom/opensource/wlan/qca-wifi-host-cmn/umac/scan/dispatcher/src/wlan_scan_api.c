@@ -891,3 +891,31 @@ wlan_scan_get_scan_entry_by_mac_freq(struct wlan_objmgr_pdev *pdev,
 {
 	return scm_scan_get_scan_entry_by_mac_freq(pdev, bssid, freq);
 }
+
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+void wlan_scan_register_cached_scan_ev_handler(struct wlan_objmgr_pdev *pdev)
+{
+	struct pdev_scan_ev_handler *pdev_ev_handler;
+
+	pdev_ev_handler = wlan_pdev_get_pdev_scan_ev_handlers(pdev);
+	if (!pdev_ev_handler) {
+		scm_debug("null pdev_ev_handler");
+		return;
+	}
+
+	pdev_ev_handler->cached_scan_ev_handler =
+				scm_scan_cached_scan_report_ev_handler;
+}
+
+void wlan_scan_deregister_cached_scan_ev_handler(struct wlan_objmgr_pdev *pdev)
+{
+	struct pdev_scan_ev_handler *pdev_ev_handler;
+
+	pdev_ev_handler = wlan_pdev_get_pdev_scan_ev_handlers(pdev);
+	if (!pdev_ev_handler)
+		return;
+
+	if (pdev_ev_handler->cached_scan_ev_handler)
+		pdev_ev_handler->cached_scan_ev_handler = NULL;
+}
+#endif
