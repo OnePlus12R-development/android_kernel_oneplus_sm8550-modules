@@ -373,6 +373,35 @@ target_if_obss_scan_disable(struct wlan_objmgr_psoc *psoc,
 	return wmi_unified_obss_disable_cmd(wmi_handle, vdev_id);
 }
 
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+static inline QDF_STATUS
+target_if_scan_register_cached_scan_report_handler(wmi_unified_t wmi_handle)
+{
+	return wmi_unified_register_event(wmi_handle,
+					  wmi_scan_cache_result_eventid,
+					  target_if_scan_cached_scan_report_handler);
+}
+
+static inline QDF_STATUS
+target_if_scan_unregister_cached_scan_report_handler(wmi_unified_t wmi_handle)
+{
+	return wmi_unified_unregister_event(wmi_handle,
+					    wmi_scan_cache_result_eventid);
+}
+#else
+static inline QDF_STATUS
+target_if_scan_register_cached_scan_report_handler(wmi_unified_t wmi_handle)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline QDF_STATUS
+target_if_scan_unregister_cached_scan_report_handler(wmi_unified_t wmi_handle)
+{
+	return QDF_STATUS_SUCCESS;
+}
+#endif
+
 QDF_STATUS
 target_if_scan_register_event_handler(struct wlan_objmgr_psoc *psoc, void *arg)
 {
@@ -395,6 +424,12 @@ target_if_scan_register_event_handler(struct wlan_objmgr_psoc *psoc, void *arg)
 	}
 
 	status = target_if_scan_register_pno_event_handler(psoc, arg);
+	if (status) {
+		target_if_err("Failed to register pno event handler cb");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	status = target_if_scan_register_cached_scan_report_handler(wmi_handle);
 
 	return status;
 }
@@ -421,6 +456,14 @@ target_if_scan_unregister_event_handler(struct wlan_objmgr_psoc *psoc,
 	}
 
 	status = target_if_scan_unregister_pno_event_handler(psoc, arg);
+	if (status) {
+		target_if_err("Failed to unregister pno event cb");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	status = target_if_scan_unregister_cached_scan_report_handler(wmi_handle);
+	if (status)
+		target_if_err("Failed to unregister cached scan report");
 
 	return status;
 }
@@ -480,6 +523,35 @@ bool target_if_is_platform_eht_capable(struct wlan_objmgr_psoc *psoc,
 }
 #endif
 
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+static bool
+target_if_scan_get_cached_scan_report_fw_cap(struct wlan_objmgr_pdev *pdev)
+{
+	struct wmi_unified *wmi_handle;
+
+	wmi_handle = get_wmi_unified_hdl_from_pdev(pdev);
+	if (!wmi_handle)
+		return false;
+
+	return wmi_service_enabled(wmi_handle,
+				   wmi_service_scan_cache_report_support);
+}
+
+static inline  void
+target_if_register_cached_scan_report_ops(struct wlan_lmac_if_scan_tx_ops *scan)
+{
+	scan->get_cached_scan_report =
+			target_if_scan_request_cached_scan_report;
+	scan->get_cached_scan_report_fw_cap =
+			target_if_scan_get_cached_scan_report_fw_cap;
+}
+#else
+static inline  void
+target_if_register_cached_scan_report_ops(struct wlan_lmac_if_scan_tx_ops *scan)
+{
+}
+#endif
+
 QDF_STATUS
 target_if_scan_tx_ops_register(struct wlan_lmac_if_tx_ops *tx_ops)
 {
@@ -499,6 +571,8 @@ target_if_scan_tx_ops_register(struct wlan_lmac_if_tx_ops *tx_ops)
 	scan->scan_reg_ev_handler = target_if_scan_register_event_handler;
 	scan->scan_unreg_ev_handler = target_if_scan_unregister_event_handler;
 	scan->is_platform_eht_capable = target_if_is_platform_eht_capable;
+
+	target_if_register_cached_scan_report_ops(scan);
 
 	return QDF_STATUS_SUCCESS;
 }

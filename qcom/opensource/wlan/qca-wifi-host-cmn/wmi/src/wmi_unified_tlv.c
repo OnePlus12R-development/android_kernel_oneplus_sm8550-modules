@@ -21026,6 +21026,10 @@ static void populate_tlv_events_id(WMI_EVT_ID *event_ids)
 	event_ids[wmi_xgap_enable_complete_eventid] =
 		WMI_XGAP_ENABLE_COMPLETE_EVENTID;
 #endif
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+	event_ids[wmi_scan_cache_result_eventid] =
+					WMI_SCAN_CACHE_RESULT_EVENTID;
+#endif
 }
 
 #ifdef WLAN_FEATURE_LINK_LAYER_STATS
@@ -21560,6 +21564,10 @@ static void populate_tlv_service(uint32_t *wmi_service)
 #ifdef WLAN_FEATURE_SR
 	wmi_service[wmi_service_obss_per_packet_sr_support] =
 				WMI_SERVICE_OBSS_PER_PACKET_SR_SUPPORT;
+#endif
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+	wmi_service[wmi_service_scan_cache_report_support] =
+			WMI_SERVICE_SCAN_CACHE_REPORT_SUPPORT;
 #endif
 	wmi_service[wmi_service_wpa3_sha384_roam_support] =
 			WMI_SERVICE_WMI_SERVICE_WPA3_SHA384_ROAM_SUPPORT;
