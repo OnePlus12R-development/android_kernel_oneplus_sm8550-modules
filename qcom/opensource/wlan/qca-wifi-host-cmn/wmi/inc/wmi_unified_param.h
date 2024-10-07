@@ -5222,6 +5222,9 @@ typedef enum {
 #ifdef WLAN_FEATURE_11BE_MLO
 	wmi_mlo_link_state_info_eventid,
 #endif
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+	wmi_scan_cache_result_eventid,
+#endif
 	wmi_events_max,
 } wmi_conv_event_id;
 
@@ -6247,6 +6250,9 @@ typedef enum {
 #endif
 #ifdef WLAN_FEATURE_SR
 	wmi_service_obss_per_packet_sr_support,
+#endif
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+	wmi_service_scan_cache_report_support,
 #endif
 	wmi_service_wpa3_sha384_roam_support,
 	wmi_service_self_mld_roam_between_dbs_and_hbs,

@@ -3239,6 +3239,12 @@ QDF_STATUS (*send_csa_event_status_ind)(
 		wmi_unified_t wmi_handle,
 		struct csa_event_status_ind params);
 #endif /* QCA_TARGET_IF_MLME */
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+QDF_STATUS (*send_get_cached_scan_report_cmd)(wmi_unified_t wmi_handle);
+
+void *(*extract_cached_scan_report_ev_params)(wmi_unified_t wmi_handle,
+					      void *ev_data, uint32_t data_len);
+#endif
 };
 
 /* Forward declaration for psoc*/
