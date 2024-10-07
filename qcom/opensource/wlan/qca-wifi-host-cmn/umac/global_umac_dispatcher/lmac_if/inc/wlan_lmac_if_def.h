@@ -389,15 +389,10 @@ struct wlan_lmac_if_mgmt_txrx_tx_ops {
  * @obss_disable: disable obss scan
  * @scan_reg_ev_handler: function to register for scan events
  * @scan_unreg_ev_handler: function to unregister for scan events
-<<<<<<< HEAD:qcom/opensource/wlan/qca-wifi-host-cmn/umac/global_umac_dispatcher/lmac_if/inc/wlan_lmac_if_def.h
-=======
- * @set_chan_list:
- * @is_platform_eht_capable:
  * @get_cached_scan_report: Function to send command to FW to get cached
  * scan report.
  * @get_cached_scan_report_fw_cap: Function to get the FW support to send
  * cached scan report.
->>>>>>> 425e310898 (qcacmn: Data structs definitions for zero power scan):umac/global_umac_dispatcher/lmac_if/inc/wlan_lmac_if_def.h
  *
  * scan module uses these functions to avail ol/da lmac services
  */
