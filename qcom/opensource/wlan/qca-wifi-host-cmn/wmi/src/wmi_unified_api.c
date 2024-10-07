@@ -4111,3 +4111,13 @@ QDF_STATUS wmi_extract_sap_coex_cap_service_ready_ext2(
 
 	return QDF_STATUS_E_FAILURE;
 }
+
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+QDF_STATUS wmi_unified_cached_scan_report_cmd_send(wmi_unified_t wmi_handle)
+{
+	if (wmi_handle->ops->send_get_cached_scan_report_cmd)
+		return wmi_handle->ops->send_get_cached_scan_report_cmd(wmi_handle);
+
+	return QDF_STATUS_E_NULL_VALUE;
+}
+#endif

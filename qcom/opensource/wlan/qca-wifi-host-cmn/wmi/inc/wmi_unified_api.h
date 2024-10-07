@@ -5102,4 +5102,14 @@ QDF_STATUS wmi_extract_sap_coex_cap_service_ready_ext2(
 			wmi_unified_t wmi_handle,
 			uint8_t *evt_buf,
 			struct wmi_host_coex_fix_chan_cap *cap);
+#ifdef FEATURE_WLAN_ZERO_POWER_SCAN
+/**
+ * wmi_unified_cached_scan_report_cmd_send() - WMI interface API to send
+ * command to request cached scan report.
+ * @wmi_handle: Handle to WMI.
+ *
+ * Return: QDF_STATUS.
+ */
+QDF_STATUS wmi_unified_cached_scan_report_cmd_send(wmi_unified_t wmi_handle);
+#endif
 #endif /* _WMI_UNIFIED_API_H_ */
