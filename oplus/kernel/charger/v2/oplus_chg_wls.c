@@ -9805,7 +9805,12 @@ static int oplus_chg_wls_entry_rx_mode(struct oplus_chg_wls *wls_dev, enum oplus
 		return 0;
 	}
 
+<<<<<<< HEAD
 	if (rx_mode == OPLUS_CHG_WLS_RX_MODE_UNKNOWN) {
+=======
+	if (rx_mode == OPLUS_CHG_WLS_RX_MODE_UNKNOWN &&
+	    wls_dev->wls_status.wls_type == OPLUS_CHG_WLS_BPP) {
+>>>>>>> c0ea151d0de (oplus: charger: Fix comparison of different enumeration types)
 		cancel_delayed_work(&wls_dev->rx_mode_check_work);
 		oplus_chg_wls_rx_set_rx_mode_safety(wls_dev, OPLUS_CHG_WLS_RX_MODE_UNKNOWN);
 		if (wls_dev->wls_status.rx_present &&
