@@ -4579,10 +4579,6 @@ __wlan_hdd_cfg80211_get_supported_features(struct wiphy *wiphy,
 	if (hdd_dynamic_mac_addr_supported(hdd_ctx))
 		fset |= WIFI_FEATURE_DYNAMIC_SET_MAC;
 
-	if (ucfg_scan_get_cached_scan_report_fw_cap(hdd_ctx->pdev))
-		wlan_hdd_set_supported_features_extn(fset_extn,
-						     WIFI_FEATURE_CACHED_SCAN_RESULTS);
-
 	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, sizeof(fset) +
 						  NLMSG_HDRLEN);
 	if (!skb) {
