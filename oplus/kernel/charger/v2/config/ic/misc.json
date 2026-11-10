@@ -1080,6 +1080,70 @@
             }
         },
         {
+            "lable": "OPLUS_IC_FUNC_BUCK_GET_SHAFT_BATT_BTB_TEMP",
+            "desc": {
+                "zh": "获取转轴BTB温度"
+            },
+            "auto_debug_code": true,
+            "parameter_list": ["int *"],
+            "parameter_desc": [
+                {
+                    "range": "0-*",
+                    "type": "out",
+                    "desc": {
+                        "zh": "转轴btb 温度"
+                    }
+                }
+            ],
+            "vict": {
+                "read": {
+                    "cmd": "vict -f {id} -G vic-*",
+                    "desc": {
+                        "zh": "N/A"
+                    }
+                },
+                "write": false,
+                "overwrite": {
+                    "cmd": "vict -f {id} -O {val} vic-*",
+                    "desc": {
+                        "zh": "N/A"
+                    }
+                }
+            }
+        },
+        {
+            "lable": "OPLUS_IC_FUNC_BUCK_PUSH_SHAFT_BATT_BTB_OVER",
+            "desc": {
+                "zh": "设置转轴BTB当前状态"
+            },
+            "auto_debug_code": true,
+            "parameter_list": ["bool"],
+            "parameter_desc": [
+                {
+                    "range": "0-1",
+                    "type": "in",
+                    "desc": {
+                        "zh": "转轴BTB当前状态 0:normal, 1:temp over"
+                    }
+                }
+            ],
+            "vict": {
+                "read": false,
+                "write": {
+                    "cmd": "vict -f {id} -S{val} vic-*",
+                    "desc": {
+                        "zh": "N/A"
+                    }
+                },
+                "overwrite": {
+                    "cmd": "vict -f {id} -O {val} vic-*",
+                    "desc": {
+                        "zh": "N/A"
+                    }
+                }
+            }
+        },
+        {
             "lable": "OPLUS_IC_FUNC_GET_SOURCE_PDO",
             "desc": {
                 "zh": "获取 source pdo 信息"
@@ -1107,8 +1171,35 @@
                 "write": false,
                 "overwrite": false
             }
+        },
+        {
+            "lable": "OPLUS_IC_FUNC_BUCK_GET_VBAT_PWR",
+            "desc": {
+                "zh": "获取电池输出到系统的电压"
+            },
+            "auto_debug_code": true,
+            "parameter_list": ["int *"],
+            "parameter_desc": [
+                {
+                    "range": "0-*",
+                    "type": "out",
+                    "desc": {
+                        "zh": "vbat pwr电压"
+                    }
+                }
+            ],
+            "vict": {
+                "read": {
+                    "cmd": "vict -f {id} -G vic-*",
+                    "desc": {
+                        "zh": "N/A"
+                    }
+                },
+                "write": false,
+                "overwrite": false
+            }
         }
     ],
 
-    "version": "V5.1:33:8775288fc6306426af27ff06b727e3f330aee635eae20d4a1ae600b4987a00c2"
+    "version": "V6.0:36:755b5f4b11ebc43ba99dddb8e4ff3855514abcdda878ed2b8a72230f478a4357"
 }

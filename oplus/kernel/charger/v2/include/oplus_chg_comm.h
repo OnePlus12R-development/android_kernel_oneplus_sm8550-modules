@@ -26,6 +26,7 @@
 enum oplus_temp_region {
 	TEMP_REGION_COLD = 0,
 	TEMP_REGION_LITTLE_COLD,
+	TEMP_REGION_LITTLE_COLD_HIGH,
 	TEMP_REGION_COOL,
 	TEMP_REGION_LITTLE_COOL,
 	TEMP_REGION_PRE_NORMAL,
@@ -37,6 +38,13 @@ enum oplus_temp_region {
 };
 
 #define V3P6_TEMP_REGION_MAX 8
+#define V3P7_TEMP_REGION_MAX 9
+
+enum power_role_type {
+	POWER_ROLE_UNKNOWN = -1,
+	POWER_ROLE_SINK = 0,
+	POWER_ROLE_SOURCE = 1,
+};
 
 enum oplus_ffc_temp_region {
 	FFC_TEMP_REGION_COOL,
@@ -50,8 +58,12 @@ enum oplus_ffc_temp_region {
 #define V3P6_FFC_TEMP_REGION_MAX 4
 
 enum oplus_fcc_gear {
-	FCC_GEAR_LOW,
+	FCC_GEAR_LOW = 0,
+	FCC_GEAR_LV1,
+	FCC_GEAR_LV2,
+	FCC_GEAR_LV3,
 	FCC_GEAR_HIGH,
+	FCC_GEAR_MAX,
 };
 
 enum oplus_chg_full_type {
@@ -99,12 +111,14 @@ enum comm_topic_item {
 	COMM_ITEM_SUPER_ENDURANCE_STATUS,
 	COMM_ITEM_SUPER_ENDURANCE_COUNT,
 	COMM_ITEM_UISOC_KEEP_2_ERROR,
+	COMM_ITEM_UISOC_KEEP_3_ERROR,
 	COMM_ITEM_RECHG_SOC_EN_STATUS,
 	COMM_ITEM_SALE_MODE,
 	COMM_ITEM_NVID_SUPPORT_FLAGS,
 	COMM_ITEM_BOOT_COMPLETED,
 	COMM_ITEM_EIS_STATUS,
 	COMM_ITEM_FLASH_MODE,
+	COMM_ITEM_BATT_CV_FULL,
 };
 
 /*
@@ -187,5 +201,8 @@ int oplus_comm_get_removed_bat_decidegc(struct oplus_mms *topic);
 void oplus_comm_set_dec_delta(struct oplus_mms *topic, int val);
 void oplus_comm_get_dec_delta(struct oplus_mms *topic, int *val);
 bool oplus_comm_get_hmac_not_pop_up(struct oplus_mms *topic);
+bool oplus_comm_get_hmac_limit_enable(struct oplus_mms *topic);
+bool oplus_comm_is_non_standard_hmac_status(struct oplus_mms *topic,
+					    bool authenticate, bool hmac);
 int oplus_comm_get_bdd_voltdiff_trend(struct oplus_mms *topic);
 #endif /* __OPLUS_CHG_COMM_H__ */

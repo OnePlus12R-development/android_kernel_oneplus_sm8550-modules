@@ -34,6 +34,13 @@
 #include "test-kit.h"
 #endif
 
+#include <oplus_chg_comm.h>
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+#include <linux/thermal.h>
+#include <soc/oplus/horae_flash_led_temp.h>
+#define NTC_SUBBOARD_TEMP_COUNT  292
+#endif
+
 #define DISCONNECT			0
 #define STANDARD_TYPEC_DEV_CONNECT	BIT(0)
 #define OTG_DEV_CONNECT			BIT(1)
@@ -69,6 +76,15 @@ struct oplus_vc_misc_gpio {
 	struct pinctrl_state *dischg_disable;
 };
 
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+struct oplus_ntc_switch {
+	bool ntc_switch_usbtemp_l;
+	bool ntc_switch_usbtemp_r;
+	bool ntc_switch_subboard;
+	int subboard_temp_table[NTC_SUBBOARD_TEMP_COUNT];
+};
+#endif
+
 struct oplus_virtual_buck_ic {
 	struct device *dev;
 	struct oplus_chg_ic_dev *ic_dev;
@@ -77,6 +93,10 @@ struct oplus_virtual_buck_ic {
 	int child_num;
 	struct oplus_virtual_buck_child *child_list;
 	struct delayed_work upload_device_id_work;
+
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+	struct oplus_ntc_switch ntc_switch_gpio;
+#endif
 
 	/* parallel charge */
 	int main_charger;
@@ -128,6 +148,109 @@ const struct test_feature_cfg g_typec_port_test_cfg = {
 	.test_info = (void *)g_typec_port_info,
 	.test_func = test_kit_typec_port_test,
 };
+
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+static int oplus_ntc_convert(struct oplus_virtual_buck_ic *chip, int volt)
+{
+	int i;
+	int size;
+
+	size = ARRAY_SIZE(chip->ntc_switch_gpio.subboard_temp_table) - 1;
+	if (size <= 0)
+		return NTC_TEMP_DEFAULT;
+
+	for (i = 1; i <= size; (i = i + 2)) {
+		if (i >= size || chip->ntc_switch_gpio.subboard_temp_table[i] <= volt)
+			break;
+	}
+	if (i >= size)
+		i = size;
+	i--;
+
+	return chip->ntc_switch_gpio.subboard_temp_table[i] * NTC_TEMP_CONVERSION;
+}
+
+static int oplus_get_subboard_temp(struct thermal_zone_device *tz, int *temp)
+{
+	int subboard_volt = 0;
+	int rc;
+	bool ret;
+	struct oplus_virtual_buck_ic *chip;
+
+	chip = (struct oplus_virtual_buck_ic *)tz->devdata;
+	if (chip) {
+		ret = oplus_set_ntc_switch_lock(SUBBOARD, true);
+		if (ret) {
+			mdelay(10);
+			rc = iio_read_channel_processed(chip->usbtemp_adc_l, &subboard_volt);
+			ret = oplus_set_ntc_switch_lock(SUBBOARD, false);
+			if (rc >= 0) {
+				subboard_volt /= NTC_TEMP_CONVERSION;
+				*temp = oplus_ntc_convert(chip, subboard_volt);
+			} else {
+				*temp = NTC_TEMP_DEFAULT;
+				chg_info("iio_read fail\n");
+			}
+		} else {
+			*temp = NTC_TEMP_DEFAULT;
+			chg_info("ntc switch fail\n");
+		}
+	} else {
+		*temp = NTC_TEMP_DEFAULT;
+	}
+	chg_info("subboard_volt:%d, temp:%d,\n", subboard_volt, *temp);
+	return 0;
+}
+
+static struct thermal_zone_device_ops subboard_temp_ops = {
+	.get_temp = oplus_get_subboard_temp,
+};
+
+static void register_subboard_thermal(struct oplus_virtual_buck_ic *chip)
+{
+	int ret = 0;
+	struct thermal_zone_device *tz_dev;
+
+	if (IS_ERR_OR_NULL(&chip->ntc_switch_gpio))
+		return;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	tz_dev = thermal_tripless_zone_device_register("subboard_temp", chip, &subboard_temp_ops, NULL);
+#else
+	tz_dev = thermal_zone_device_register("subboard_temp", 0, 0, chip, &subboard_temp_ops, NULL, 0, 0);
+#endif
+	if (IS_ERR(tz_dev)) {
+		chg_err("subboard_temp register fail");
+		return;
+	}
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
+	ret = thermal_zone_device_enable(tz_dev);
+	if (ret) {
+		thermal_zone_device_unregister(tz_dev);
+		return;
+	}
+#endif
+	chg_info("register_subboard_thermal success\n");
+}
+
+static void oplus_ntc_switch_init(struct oplus_virtual_buck_ic *chip)
+{
+	int rc;
+
+	if (!chip) {
+		chg_err("chip not ready!\n");
+		return;
+	}
+	chip->ntc_switch_gpio.ntc_switch_usbtemp_l = of_property_read_bool(chip->dev->of_node, "oplus,ntc_switch_usbtemp_l");
+	chip->ntc_switch_gpio.ntc_switch_usbtemp_r = of_property_read_bool(chip->dev->of_node, "oplus,ntc_switch_usbtemp_r");
+	chip->ntc_switch_gpio.ntc_switch_subboard = of_property_read_bool(chip->dev->of_node, "oplus,ntc_switch_subboard");
+	if (chip->ntc_switch_gpio.ntc_switch_subboard) {
+		rc = read_signed_data_from_node(chip->dev->of_node, "chg_ntc_para", (s32 *)chip->ntc_switch_gpio.subboard_temp_table,
+						NTC_SUBBOARD_TEMP_COUNT);
+		if (rc >= 0)
+			register_subboard_thermal(chip);
+	}
+}
+#endif
 
 bool test_kit_typec_port_check(void *info, char *buf, size_t len, size_t *use_size)
 {
@@ -2383,7 +2506,7 @@ static int oplus_chg_vb_shipmod_enable(struct oplus_chg_ic_dev *ic_dev, bool en)
 		chg_err("oplus_chg_ic_dev is NULL");
 		return -ENODEV;
 	}
-
+	chg_info("shipmode:%d\n", en);
 	vb = oplus_chg_ic_get_drvdata(ic_dev);
 	if (gpio_is_valid(vb->misc_gpio.ship_gpio)) {
 		chg_info("select gpio ship mode control\n");
@@ -2407,10 +2530,11 @@ static int oplus_chg_vb_shipmod_enable(struct oplus_chg_ic_dev *ic_dev, bool en)
 			vb->child_list[i].ic_dev,
 			OPLUS_IC_FUNC_BUCK_SHIPMODE_ENABLE,
 			en);
+
 		if (rc < 0)
 			chg_err("child ic[%d] %s shipmod error, rc=%d\n", i, en ? "enable" : "disable", rc);
 		else
-			return 0;
+			chg_info("child ic[%d] %s shipmod success, rc=%d\n", i, en ? "enable" : "disable", rc);
 	}
 
 	return rc;
@@ -2940,6 +3064,34 @@ static int oplus_chg_vb_get_vbus_collapse_status(struct oplus_chg_ic_dev *ic_dev
 }
 
 #define USBTEMP_DEFAULT_VOLT_VALUE_MV 950
+
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+static int oplus_chg_switch_usb_temp(struct oplus_virtual_buck_ic *chip, enum ntc_switch_type usbtemp_type, int *vol_val)
+{
+	int rc = 0;
+	int usbtemp_volt;
+
+	oplus_set_ntc_switch_lock(usbtemp_type, true);
+	mdelay(10);
+
+	switch (usbtemp_type) {
+	case USBTEMP_L:
+		rc = iio_read_channel_processed(chip->usbtemp_adc_l, &usbtemp_volt);
+		break;
+	case USBTEMP_R:
+		rc = iio_read_channel_processed(chip->usbtemp_adc_r, &usbtemp_volt);
+		break;
+	default:
+		usbtemp_volt = USBTEMP_DEFAULT_VOLT_VALUE_MV;
+		break;
+	}
+
+	*vol_val = usbtemp_volt;
+	oplus_set_ntc_switch_lock(usbtemp_type, false);
+	return rc;
+}
+#endif
+
 static int oplus_chg_vb_get_usb_temp_volt(struct oplus_chg_ic_dev *ic_dev, int *vol_l, int *vol_r)
 {
 	struct oplus_virtual_buck_ic *vb;
@@ -2966,7 +3118,15 @@ static int oplus_chg_vb_get_usb_temp_volt(struct oplus_chg_ic_dev *ic_dev, int *
 		goto usbtemp_next;
 	}
 
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+	if (vb->ntc_switch_gpio.ntc_switch_usbtemp_l)
+		rc = oplus_chg_switch_usb_temp(vb, USBTEMP_L, &usbtemp_volt);
+	else
+		rc = iio_read_channel_processed(vb->usbtemp_adc_l, &usbtemp_volt);
+#else
 	rc = iio_read_channel_processed(vb->usbtemp_adc_l, &usbtemp_volt);
+#endif
+
 	if (rc < 0) {
 		chg_err("usbtemp_volt_l read error\n");
 		*vol_l = usbtemp_volt_l_pre;
@@ -2993,7 +3153,15 @@ usbtemp_next:
 		return 0;
 	}
 
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+	if (vb->ntc_switch_gpio.ntc_switch_usbtemp_r)
+		rc = oplus_chg_switch_usb_temp(vb, USBTEMP_R, &usbtemp_volt);
+	else
+		rc = iio_read_channel_processed(vb->usbtemp_adc_r, &usbtemp_volt);
+#else
 	rc = iio_read_channel_processed(vb->usbtemp_adc_r, &usbtemp_volt);
+#endif
+
 	if (rc < 0) {
 		chg_err("usbtemp_volt_r read error\n");
 		*vol_r = usbtemp_volt_r_pre;
@@ -3090,6 +3258,72 @@ static int oplus_chg_vb_get_power_role(struct oplus_chg_ic_dev *ic_dev,
 	return rc;
 }
 
+static int oplus_chg_vb_get_vdm_info(struct oplus_chg_ic_dev *ic_dev,
+				     u32 *data, int *cnt)
+{
+	struct oplus_virtual_buck_ic *vb;
+	int i;
+	int rc = -ENOTSUPP;
+
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL");
+		return -ENODEV;
+	}
+	vb = oplus_chg_ic_get_drvdata(ic_dev);
+	for (i = 0; i < vb->child_num; i++) {
+		if (!func_is_support(&vb->child_list[i], OPLUS_IC_FUNC_BUCK_GET_VDM_INFO)) {
+			rc = -ENOTSUPP;
+			continue;
+		}
+		rc = oplus_chg_ic_func(vb->child_list[i].ic_dev,
+				       OPLUS_IC_FUNC_BUCK_GET_VDM_INFO,
+				       data, cnt);
+		if (rc < 0) {
+			if (rc != -ENOTSUPP)
+				chg_err("child ic[%d] get vdm info error, rc=%d\n", i, rc);
+			continue;
+		}
+		return 0;
+	}
+	if (rc == -ENOTSUPP)
+		chg_err("no child ic support get vdm info function\n");
+	return rc;
+}
+
+static int oplus_chg_vb_send_get_sink_cap(struct oplus_chg_ic_dev *ic_dev)
+{
+	struct oplus_virtual_buck_ic *vb;
+	int i;
+	int rc = -ENOTSUPP;
+
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL");
+		return -ENODEV;
+	}
+	vb = oplus_chg_ic_get_drvdata(ic_dev);
+	if (vb == NULL) {
+		chg_err("oplus_virtual_buck_ic is NULL");
+		return -ENODEV;
+	}
+
+	for (i = 0; i < vb->child_num; i++) {
+		if (!func_is_support(&vb->child_list[i], OPLUS_IC_FUNC_BUCK_SEND_GET_SINK_CAP)) {
+			rc = -ENOTSUPP;
+			continue;
+		}
+		rc = oplus_chg_ic_func(vb->child_list[i].ic_dev,
+				       OPLUS_IC_FUNC_BUCK_SEND_GET_SINK_CAP);
+		if (rc < 0) {
+			if (rc != -ENOTSUPP)
+				chg_err("child ic[%d] send get sink cap error, rc=%d\n", i, rc);
+			continue;
+		}
+		return 0;
+	}
+	if (rc == -ENOTSUPP)
+		chg_err("no child ic support get sink cap function\n");
+	return rc;
+}
 
 static int oplus_chg_vb_get_typec_mode(struct oplus_chg_ic_dev *ic_dev,
 				       enum oplus_chg_typec_port_role_type *mode)
@@ -3976,6 +4210,37 @@ static int oplus_chg_vb_get_usb_btb_temp(struct oplus_chg_ic_dev *ic_dev,
 	return rc;
 }
 
+static int oplus_chg_vb_get_vbat_pwr(struct oplus_chg_ic_dev *ic_dev,
+					  int *vbat_pwr)
+{
+	struct oplus_virtual_buck_ic *vb;
+	int i;
+	int rc = 0;
+
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL");
+		return -ENODEV;
+	}
+	vb = oplus_chg_ic_get_drvdata(ic_dev);
+
+	for (i = 0; i < vb->child_num; i++) {
+		if (!func_is_support(&vb->child_list[i],
+				     OPLUS_IC_FUNC_BUCK_GET_VBAT_PWR)) {
+			rc = -ENOTSUPP;
+			continue;
+		}
+		rc = oplus_chg_ic_func(vb->child_list[i].ic_dev,
+				       OPLUS_IC_FUNC_BUCK_GET_VBAT_PWR,
+				       vbat_pwr);
+		if (rc < 0)
+			chg_err("child ic[%d] can't get vbat pwr, rc=%d\n",
+				i, rc);
+		break;
+	}
+
+	return rc;
+}
+
 static int oplus_chg_vb_get_batt_btb_temp(struct oplus_chg_ic_dev *ic_dev,
 					  int *batt_btb_temp)
 {
@@ -4005,6 +4270,62 @@ static int oplus_chg_vb_get_batt_btb_temp(struct oplus_chg_ic_dev *ic_dev,
 	}
 
 	return rc;
+}
+
+static int oplus_chg_vb_get_shaft_btb_temp(struct oplus_chg_ic_dev *ic_dev,
+					  int *shaft_btb_tbat)
+{
+	struct oplus_virtual_buck_ic *vb;
+	int i;
+	int rc = 0;
+
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL");
+		return -ENODEV;
+	}
+	vb = oplus_chg_ic_get_drvdata(ic_dev);
+
+	for (i = 0; i < vb->child_num; i++) {
+		if (!func_is_support(&vb->child_list[i], OPLUS_IC_FUNC_BUCK_GET_SHAFT_BATT_BTB_TEMP)) {
+			rc = -ENOTSUPP;
+			continue;
+		}
+		rc = oplus_chg_ic_func(vb->child_list[i].ic_dev, OPLUS_IC_FUNC_BUCK_GET_SHAFT_BATT_BTB_TEMP, shaft_btb_tbat);
+		if (rc < 0)
+			chg_err("child ic[%d] can't get shaft btb status, rc=%d\n", i, rc);
+		break;
+	}
+
+	return rc;
+}
+
+int oplus_chg_vb_set_shfat_btb_over_status(struct oplus_chg_ic_dev *ic_dev, bool is_shaft_btb_over)
+{
+	struct oplus_virtual_buck_ic *vb;
+	int i;
+	int rc = 0;
+
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL");
+		return -ENODEV;
+	}
+
+	vb = oplus_chg_ic_get_drvdata(ic_dev);
+
+	for (i = 0; i < vb->child_num; i++) {
+		if (!func_is_support(&vb->child_list[i], OPLUS_IC_FUNC_BUCK_PUSH_SHAFT_BATT_BTB_OVER)) {
+			rc = -ENOTSUPP;
+			continue;
+		}
+		rc = oplus_chg_ic_func(vb->child_list[i].ic_dev, OPLUS_IC_FUNC_BUCK_PUSH_SHAFT_BATT_BTB_OVER,
+			is_shaft_btb_over);
+		if (rc < 0) {
+			chg_err("child ic[%d] set shfat btb status error, rc=%d\n", i, rc);
+			return rc;
+		}
+	}
+
+	return 0;
 }
 
 static int oplus_chg_vb_get_fv(struct oplus_chg_ic_dev *ic_dev,
@@ -4552,6 +4873,72 @@ static int oplus_chg_vb_get_lpd_info(struct oplus_chg_ic_dev *ic_dev, u32 *buffe
 	return rc;
 }
 
+#if IS_ENABLED(CONFIG_OPLUS_TVS_DAMAGE_SUPPORT)
+static int oplus_chg_vb_get_tvs_cc_state(struct oplus_chg_ic_dev *ic_dev, u8 *cc1, u8 *cc2)
+{
+	struct oplus_virtual_buck_ic *vb;
+	int i;
+	int rc = -ENOTSUPP;
+
+	if (ic_dev == NULL || cc1 == NULL || cc2 == NULL) {
+		chg_err("oplus_chg_ic_dev or cc pointer is NULL\n");
+		return -ENODEV;
+	}
+
+	vb = oplus_chg_ic_get_drvdata(ic_dev);
+	if (!vb || !vb->child_list) {
+		chg_err("chip or chip->child_list is NULL\n");
+		return -ENODEV;
+	}
+
+	for (i = 0; i < vb->child_num; i++) {
+		if (!func_is_support(&vb->child_list[i], OPLUS_IC_FUNC_BUCK_GET_TVS_CC_STATE))
+			continue;
+
+		rc = oplus_chg_ic_func(vb->child_list[i].ic_dev,
+				       OPLUS_IC_FUNC_BUCK_GET_TVS_CC_STATE, cc1, cc2);
+		if (rc < 0)
+			chg_err("child ic[%d] get cc state error, rc=%d\n", i, rc);
+		else
+			return 0;
+	}
+
+	return rc;
+}
+
+static int oplus_chg_vb_set_tvs_cc_open(struct oplus_chg_ic_dev *ic_dev)
+{
+	struct oplus_virtual_buck_ic *vb;
+	int i;
+	int rc = -ENOTSUPP;
+
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL\n");
+		return -ENODEV;
+	}
+
+	vb = oplus_chg_ic_get_drvdata(ic_dev);
+	if (!vb || !vb->child_list) {
+		chg_err("chip or chip->child_list is NULL\n");
+		return -ENODEV;
+	}
+
+	for (i = 0; i < vb->child_num; i++) {
+		if (!func_is_support(&vb->child_list[i], OPLUS_IC_FUNC_BUCK_SET_TVS_CC_OPEN))
+			continue;
+
+		rc = oplus_chg_ic_func(vb->child_list[i].ic_dev,
+				       OPLUS_IC_FUNC_BUCK_SET_TVS_CC_OPEN);
+		if (rc < 0)
+			chg_err("child ic[%d] set cc open error, rc=%d\n", i, rc);
+		else
+			return 0;
+	}
+
+	return rc;
+}
+#endif /* CONFIG_OPLUS_TVS_DAMAGE_SUPPORT */
+
 int oplus_chg_vb_set_flash_mode(struct oplus_chg_ic_dev *ic_dev, bool flash_mode)
 {
 	struct oplus_virtual_buck_ic *vb;
@@ -4729,6 +5116,76 @@ static int oplus_chg_vb_get_power_mos_status(struct oplus_chg_ic_dev *ic_dev, bo
 			return 0;
 	}
 
+	return rc;
+}
+
+int oplus_chg_vb_set_adsp_ovp(struct oplus_chg_ic_dev *ic_dev, bool enable)
+{
+	struct oplus_virtual_buck_ic *chip;
+	int i;
+	int rc = 0;
+
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL");
+		return -ENODEV;
+	}
+
+	chip = oplus_chg_ic_get_drvdata(ic_dev);
+	if (chip == NULL) {
+		chg_err("feature chip is NULL\n");
+		return -ENODEV;
+	}
+	if (chip->child_list == NULL) {
+		chg_err("child_list is NULL\n");
+		return -ENODEV;
+	}
+
+	for (i = 0; i < chip->child_num; i++) {
+		if (!func_is_support(&chip->child_list[i], OPLUS_IC_FUNC_BUCK_SET_OVP_FORCED)) {
+			rc = -ENOTSUPP;
+			continue;
+		}
+		rc = oplus_chg_ic_func(
+			chip->child_list[i].ic_dev,
+			OPLUS_IC_FUNC_BUCK_SET_OVP_FORCED,
+			enable);
+		if (rc < 0)
+			chg_err("child ic[%d] set OVP forced to %d error, rc=%d\n", i, enable, rc);
+		else
+			return 0;
+	}
+
+	return rc;
+}
+
+static int oplus_set_usb_dpdm_ovp_disable(struct oplus_chg_ic_dev *ic_dev, bool disable)
+{
+	struct oplus_virtual_buck_ic *vb;
+	int i;
+	int rc = 0;
+
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL");
+		return -ENODEV;
+	}
+
+	vb = oplus_chg_ic_get_drvdata(ic_dev);
+	if (!vb || !vb->child_list) {
+		chg_err("vb or child_list is NULL");
+		return -ENODEV;
+	}
+
+	for (i = 0; i < vb->child_num; i++) {
+		if (!func_is_support(&vb->child_list[i], OPLUS_IC_FUNC_BUCK_SET_DPDM_OVP_DISABLE)) {
+			rc = -ENOTSUPP;
+			continue;
+		}
+		rc = oplus_chg_ic_func(vb->child_list[i].ic_dev, OPLUS_IC_FUNC_BUCK_SET_DPDM_OVP_DISABLE, disable);
+		if (rc < 0)
+			chg_err("child ic[%d] OPLUS_IC_FUNC_BUCK_SET_DPDM_OVP_DISABLE error, rc=%d\n", i, rc);
+		else
+			return 0;
+	}
 	return rc;
 }
 
@@ -4948,6 +5405,14 @@ static void *oplus_chg_vb_get_func(struct oplus_chg_ic_dev *ic_dev, enum oplus_c
 	case OPLUS_IC_FUNC_BUCK_GET_TYPEC_STATE:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_GET_TYPEC_STATE, oplus_chg_vb_get_typec_state);
 		break;
+#if IS_ENABLED(CONFIG_OPLUS_TVS_DAMAGE_SUPPORT)
+	case OPLUS_IC_FUNC_BUCK_GET_TVS_CC_STATE:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_GET_TVS_CC_STATE, oplus_chg_vb_get_tvs_cc_state);
+		break;
+	case OPLUS_IC_FUNC_BUCK_SET_TVS_CC_OPEN:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_SET_TVS_CC_OPEN, oplus_chg_vb_set_tvs_cc_open);
+		break;
+#endif
 	case OPLUS_IC_FUNC_GET_DATA_ROLE:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_GET_DATA_ROLE,
 					       oplus_chg_vb_get_data_role);
@@ -4959,6 +5424,10 @@ static void *oplus_chg_vb_get_func(struct oplus_chg_ic_dev *ic_dev, enum oplus_c
 	case OPLUS_IC_FUNC_BUCK_GET_BATT_BTB_TEMP:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_GET_BATT_BTB_TEMP,
 					       oplus_chg_vb_get_batt_btb_temp);
+		break;
+	case OPLUS_IC_FUNC_BUCK_GET_VBAT_PWR:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_GET_VBAT_PWR,
+					       oplus_chg_vb_get_vbat_pwr);
 		break;
 	case OPLUS_IC_FUNC_BUCK_GET_FV:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_GET_FV, oplus_chg_vb_get_fv);
@@ -5024,6 +5493,14 @@ static void *oplus_chg_vb_get_func(struct oplus_chg_ic_dev *ic_dev, enum oplus_c
 	case OPLUS_IC_FUNC_BUCK_ITEM_CHECK:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_ITEM_CHECK, oplus_chg_vb_iterm_check);
 		break;
+	case OPLUS_IC_FUNC_BUCK_GET_SHAFT_BATT_BTB_TEMP:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_GET_SHAFT_BATT_BTB_TEMP,
+					       oplus_chg_vb_get_shaft_btb_temp);
+		break;
+	case OPLUS_IC_FUNC_BUCK_PUSH_SHAFT_BATT_BTB_OVER:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_PUSH_SHAFT_BATT_BTB_OVER,
+					       oplus_chg_vb_set_shfat_btb_over_status);
+		break;
 	case OPLUS_IC_FUNC_BUCK_GET_POWER_ROLE:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_GET_POWER_ROLE, oplus_chg_vb_get_power_role);
 		break;
@@ -5032,6 +5509,18 @@ static void *oplus_chg_vb_get_func(struct oplus_chg_ic_dev *ic_dev, enum oplus_c
 		break;
 	case OPLUS_IC_FUNC_BUCK_GET_POWER_MOS_ENABLE:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_GET_POWER_MOS_ENABLE, oplus_chg_vb_get_power_mos_status);
+		break;
+	case OPLUS_IC_FUNC_BUCK_SET_OVP_FORCED:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_SET_OVP_FORCED, oplus_chg_vb_set_adsp_ovp);
+		break;
+	case OPLUS_IC_FUNC_BUCK_SET_DPDM_OVP_DISABLE:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_SET_DPDM_OVP_DISABLE, oplus_set_usb_dpdm_ovp_disable);
+		break;
+	case OPLUS_IC_FUNC_BUCK_GET_VDM_INFO:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_GET_VDM_INFO, oplus_chg_vb_get_vdm_info);
+		break;
+	case OPLUS_IC_FUNC_BUCK_SEND_GET_SINK_CAP:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_BUCK_SEND_GET_SINK_CAP, oplus_chg_vb_send_get_sink_cap);
 		break;
 	default:
 		chg_err("this func(=%d) is not supported\n", func_id);
@@ -5456,6 +5945,10 @@ static int oplus_virtual_buck_probe(struct platform_device *pdev)
 		goto reg_ic_err;
 	}
 
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+	oplus_ntc_switch_init(chip);
+#endif
+
 #if IS_ENABLED(CONFIG_OPLUS_CHG_TEST_KIT)
 	oplus_virtual_buck_test_kit_init(chip);
 #endif
@@ -5491,6 +5984,9 @@ static int oplus_virtual_buck_remove(struct platform_device *pdev)
 #endif
 {
 	struct oplus_virtual_buck_ic *chip = platform_get_drvdata(pdev);
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+	struct thermal_zone_device *tzd;
+#endif
 
 	if (chip == NULL) {
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
@@ -5499,6 +5995,14 @@ static int oplus_virtual_buck_remove(struct platform_device *pdev)
 		return;
 #endif
 	}
+
+#if IS_ENABLED(CONFIG_HORAE_FLASH_LED_THERMAL)
+	if (chip->ntc_switch_gpio.ntc_switch_subboard) {
+		tzd = thermal_zone_get_zone_by_name("subboard_temp");
+		if (!IS_ERR_OR_NULL(tzd))
+			thermal_zone_device_unregister(tzd);
+	}
+#endif
 
 	if (chip->ic_dev->online)
 		oplus_chg_vb_exit(chip->ic_dev);

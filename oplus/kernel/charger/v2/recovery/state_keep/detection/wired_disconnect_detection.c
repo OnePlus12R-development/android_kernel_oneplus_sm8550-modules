@@ -66,7 +66,7 @@ static struct wired_disconnect_detection *g_wdd;
 #define CHECK_MAX_TIME_MS		2000
 #define HW_DETECT_CHECK_TIME_MS		50
 #define HW_DETECT_CHECK_COUNT		3
-#define DISCONNECT_TIME_THR_MS		1500
+#define DISCONNECT_TIME_THR_MS		2000
 
 static void wdd_state_reset(struct wired_disconnect_detection *wdd)
 {
@@ -439,6 +439,11 @@ static int wdd_parse_dt(struct wired_disconnect_detection *wdd)
 			i * WDD_PROTOCOL_SWITCH_INFO_ITEM_NUM, &wdd->config.switch_table[i].protocol);
 		if (rc < 0)
 			goto err;
+		if (wdd_is_invalid_protocol(wdd->config.switch_table[i].protocol)) {
+			chg_err("switch_table[%d].protocol is invalid, protocol = %d\n",
+				i, wdd->config.switch_table[i].protocol);
+			continue;
+		}
 		wdd->config.support_protocol_mask |= BIT(wdd->config.switch_table[i].protocol);
 		rc = of_property_read_u32_index(wdd->node, "protocol_switch_table",
 			i * WDD_PROTOCOL_SWITCH_INFO_ITEM_NUM + 1, &wdd->config.switch_table[i].power_thr_mw);
